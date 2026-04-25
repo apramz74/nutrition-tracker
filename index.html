@@ -314,7 +314,7 @@
   .entry-stat.cal .entry-stat-num { color: var(--blue-bright); }
   .entry-stat.pro .entry-stat-num { color: var(--accent-coral); }
   .entry-stat.fib .entry-stat-num { color: var(--accent-mint); }
-  .entry-del {
+  .entry-del, .entry-edit {
     background: none;
     border: none;
     color: var(--text-faint);
@@ -327,6 +327,62 @@
     line-height: 1;
   }
   .entry-del:hover, .entry-del:active { color: var(--accent-coral); background: rgba(255,107,138,0.1); }
+  .entry-edit:hover, .entry-edit:active { color: var(--blue-bright); background: rgba(76,201,255,0.1); }
+  .entry-actions { display: flex; gap: 2px; }
+
+  /* inline edit row */
+  .entry.editing {
+    grid-template-columns: auto 1fr auto;
+    background: rgba(26,47,107,0.5);
+    border-color: rgba(76,201,255,0.35);
+  }
+  .entry-edit-fields {
+    display: flex;
+    gap: 8px;
+  }
+  .entry-edit-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .entry-edit-field label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .entry-edit-field.cal label { color: var(--blue-bright); }
+  .entry-edit-field.pro label { color: var(--accent-coral); }
+  .entry-edit-field.fib label { color: var(--accent-mint); }
+  .entry-edit-field input {
+    width: 64px;
+    background: rgba(5,11,31,0.6);
+    border: 1px solid rgba(76,201,255,0.2);
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: var(--text);
+    font-family: 'Fraunces', serif;
+    font-size: 16px;
+    font-weight: 500;
+    outline: none;
+    -moz-appearance: textfield;
+  }
+  .entry-edit-field input::-webkit-outer-spin-button,
+  .entry-edit-field input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .entry-edit-field input:focus { border-color: var(--blue-bright); }
+  .entry-save {
+    background: none;
+    border: none;
+    color: var(--accent-mint);
+    font-family: 'DM Mono', monospace;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 8px;
+    transition: all 0.2s;
+    line-height: 1;
+  }
+  .entry-save:hover { background: rgba(106,255,212,0.1); }
 
   .empty {
     text-align: center;
@@ -674,14 +730,17 @@
       $('resetRow').style.display = 'none';
     } else {
       logEl.innerHTML = log.map((e, i) => `
-        <div class="entry" style="animation-delay: ${Math.min(i * 0.04, 0.3)}s">
+        <div class="entry" data-id="${e.id}" style="animation-delay: ${Math.min(i * 0.04, 0.3)}s">
           <span class="entry-time">${e.time}</span>
           <div class="entry-stats">
             ${e.cal ? `<div class="entry-stat cal"><span class="entry-stat-num">${round(e.cal)}</span><span class="entry-stat-key">cal</span></div>` : ''}
             ${e.pro ? `<div class="entry-stat pro"><span class="entry-stat-num">${round(e.pro)}</span><span class="entry-stat-key">p</span></div>` : ''}
             ${e.fib ? `<div class="entry-stat fib"><span class="entry-stat-num">${round(e.fib)}</span><span class="entry-stat-key">f</span></div>` : ''}
           </div>
-          <button class="entry-del" data-id="${e.id}" aria-label="delete">×</button>
+          <div class="entry-actions">
+            <button class="entry-edit" data-id="${e.id}" aria-label="edit">✎</button>
+            <button class="entry-del" data-id="${e.id}" aria-label="delete">×</button>
+          </div>
         </div>
       `).join('');
       $('resetRow').style.display = 'flex';
@@ -691,8 +750,57 @@
 
     document.querySelectorAll('.entry-del').forEach(btn => {
       btn.addEventListener('click', async () => {
+        await deleteDoc(doc(db, 'logs', btn.dataset.id));
+      });
+    });
+
+    document.querySelectorAll('.entry-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
         const id = btn.dataset.id;
-        await deleteDoc(doc(db, 'logs', id));
+        const entry = log.find(e => e.id === id);
+        if (!entry) return;
+        const row = logEl.querySelector(`.entry[data-id="${id}"]`);
+        row.classList.add('editing');
+        row.innerHTML = `
+          <span class="entry-time">${entry.time}</span>
+          <div class="entry-edit-fields">
+            <div class="entry-edit-field cal">
+              <label>cal</label>
+              <input type="number" inputmode="decimal" value="${entry.cal || ''}" placeholder="0" min="0" data-field="cal" />
+            </div>
+            <div class="entry-edit-field pro">
+              <label>protein</label>
+              <input type="number" inputmode="decimal" value="${entry.pro || ''}" placeholder="0" min="0" data-field="pro" />
+            </div>
+            <div class="entry-edit-field fib">
+              <label>fiber</label>
+              <input type="number" inputmode="decimal" value="${entry.fib || ''}" placeholder="0" min="0" data-field="fib" />
+            </div>
+          </div>
+          <div class="entry-actions">
+            <button class="entry-save" data-id="${id}" aria-label="save">✓</button>
+            <button class="entry-del" data-id="${id}" aria-label="delete">×</button>
+          </div>
+        `;
+        row.querySelector('input').focus();
+
+        row.querySelector('.entry-save').addEventListener('click', async () => {
+          const cal = parseFloat(row.querySelector('[data-field="cal"]').value) || 0;
+          const pro = parseFloat(row.querySelector('[data-field="pro"]').value) || 0;
+          const fib = parseFloat(row.querySelector('[data-field="fib"]').value) || 0;
+          await setDoc(doc(db, 'logs', id), { cal, pro, fib, time: entry.time, ts: entry.ts });
+        });
+
+        row.querySelector('.entry-del').addEventListener('click', async () => {
+          await deleteDoc(doc(db, 'logs', id));
+        });
+
+        row.querySelectorAll('input').forEach(input => {
+          input.addEventListener('keydown', async e => {
+            if (e.key === 'Enter') row.querySelector('.entry-save').click();
+            if (e.key === 'Escape') render(false);
+          });
+        });
       });
     });
   }
