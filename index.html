@@ -578,11 +578,25 @@
   </div>
 </div>
 
-<script>
-  const GOALS = { cal: 2400, pro: 180, fib: 35 };
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, where, Timestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
+  const firebaseConfig = {
+    apiKey: "AIzaSyDmCCMsPg5DsjtaJCkWrZZYVCr7vFvD4j0",
+    authDomain: "nutri-tracker-apramono.firebaseapp.com",
+    projectId: "nutri-tracker-apramono",
+    storageBucket: "nutri-tracker-apramono.firebasestorage.app",
+    messagingSenderId: "515973307391",
+    appId: "1:515973307391:web:a0dd941ea3d000b4bee5ca"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  const GOALS = { cal: 2400, pro: 180, fib: 35 };
   const $ = id => document.getElementById(id);
-  const log = [];
+  let log = [];
 
   // Date display
   function setDate() {
@@ -602,10 +616,15 @@
   setClock();
   setInterval(setClock, 30000);
 
-  // Goals
   $('calGoal').textContent = GOALS.cal;
   $('proGoal').textContent = GOALS.pro;
   $('fibGoal').textContent = GOALS.fib;
+
+  function todayBounds() {
+    const start = new Date(); start.setHours(0,0,0,0);
+    const end   = new Date(); end.setHours(23,59,59,999);
+    return { start: Timestamp.fromDate(start), end: Timestamp.fromDate(end) };
+  }
 
   function totals() {
     return log.reduce((acc, e) => ({
@@ -625,7 +644,6 @@
     const t = totals();
     const round = n => Math.round(n * 10) / 10;
 
-    // Calories ring
     const calPct = Math.min(t.cal / GOALS.cal, 1);
     const circ = 2 * Math.PI * 56;
     $('ringFill').setAttribute('stroke-dasharray', `${circ * calPct} ${circ}`);
@@ -633,7 +651,6 @@
     $('calRem').innerHTML = `${Math.max(GOALS.cal - Math.round(t.cal), 0)}<em>kcal</em>`;
     $('calPct').innerHTML = `${Math.round((t.cal / GOALS.cal) * 100)}<em>%</em>`;
 
-    // Macros
     $('proNum').textContent = round(t.pro);
     $('fibNum').textContent = round(t.fib);
     $('proBar').style.width = Math.min(t.pro / GOALS.pro, 1) * 100 + '%';
@@ -645,7 +662,6 @@
       pulseEl($('fibNum'));
     }
 
-    // Log
     const logEl = $('log');
     if (log.length === 0) {
       logEl.innerHTML = `
@@ -673,19 +689,23 @@
 
     $('logCount').textContent = `${log.length} ${log.length === 1 ? 'entry' : 'entries'}`;
 
-    // Wire deletes
     document.querySelectorAll('.entry-del').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = +btn.dataset.id;
-        const idx = log.findIndex(e => e.id === id);
-        if (idx > -1) {
-          log.splice(idx, 1);
-          save();
-          render();
-        }
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        await deleteDoc(doc(db, 'logs', id));
       });
     });
   }
+
+  // Real-time listener — today's entries only, ordered by timestamp desc
+  const { start, end } = todayBounds();
+  const q = query(collection(db, 'logs'), where('ts', '>=', start), where('ts', '<=', end));
+  onSnapshot(q, snap => {
+    log = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => b.ts.seconds - a.ts.seconds);
+    render(false);
+  });
 
   // Inputs
   const inCal = $('inCal'), inPro = $('inPro'), inFib = $('inFib');
@@ -705,57 +725,30 @@
     });
   });
 
-  function addEntry() {
+  async function addEntry() {
     const cal = parseFloat(inCal.value) || 0;
     const pro = parseFloat(inPro.value) || 0;
     const fib = parseFloat(inFib.value) || 0;
     if (cal <= 0 && pro <= 0 && fib <= 0) return;
 
-    const d = new Date();
-    const time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    log.unshift({ id: Date.now(), cal, pro, fib, time });
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const id = String(Date.now());
 
     inCal.value = inPro.value = inFib.value = '';
     checkInputs();
-    save();
-    render();
     inCal.focus();
+
+    await setDoc(doc(db, 'logs', id), { cal, pro, fib, time, ts: Timestamp.fromDate(now) });
   }
 
   addBtn.addEventListener('click', addEntry);
 
-  // Reset
-  $('resetBtn').addEventListener('click', () => {
+  $('resetBtn').addEventListener('click', async () => {
     if (confirm('Clear all entries for today?')) {
-      log.length = 0;
-      save();
-      render(false);
+      await Promise.all(log.map(e => deleteDoc(doc(db, 'logs', e.id))));
     }
   });
-
-  // Persistence — daily reset
-  function todayKey() {
-    const d = new Date();
-    return `nutri-${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  }
-
-  function save() {
-    try {
-      localStorage.setItem('nutri-log', JSON.stringify({ date: todayKey(), entries: log }));
-    } catch(e) {}
-  }
-
-  function load() {
-    try {
-      const data = JSON.parse(localStorage.getItem('nutri-log'));
-      if (data && data.date === todayKey() && Array.isArray(data.entries)) {
-        log.push(...data.entries);
-      }
-    } catch(e) {}
-  }
-
-  load();
-  render(false);
 </script>
 
 </body>
