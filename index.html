@@ -741,15 +741,13 @@
 
   function save() {
     try {
-      const data = { date: todayKey(), entries: log };
-      // Use in-memory only — fallback for environments without storage
-      window.__nutriData = data;
+      localStorage.setItem('nutri-log', JSON.stringify({ date: todayKey(), entries: log }));
     } catch(e) {}
   }
 
   function load() {
     try {
-      const data = window.__nutriData;
+      const data = JSON.parse(localStorage.getItem('nutri-log'));
       if (data && data.date === todayKey() && Array.isArray(data.entries)) {
         log.push(...data.entries);
       }
